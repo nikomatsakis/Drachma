@@ -28,21 +28,27 @@ class Transaction(object):
     def conflict_key(self):
         return (self.date, self.amount)
 
+def by_date(t1, t2):
+    return cmp(t1.date, t2.date)
+
 def add_to_conflict_map(conflict_map, transactions):
     for transaction in transactions:
         key = transaction.conflict_key()
-        if key in result:
+        if key in conflict_map:
             conflict_map[key].append(transaction)
         else:
             conflict_map[key] = [transaction]
 
 def remove_from_conflict_map(conflict_map, transactions):
+    not_found = []
     for transaction in transactions:
         key = transaction.conflict_key()
-        if key in result:
-            conflict_map[key].append(transaction)
+        if key in conflict_map:
+            conflict_map[key].pop()
         else:
-            conflict_map[key] = [transaction]
+            not_found.append(transaction)
+    not_found.sort(by_date)
+    return not_found
 
 def load_from_csv(file_name):
     file_text = open(file_name).read()
@@ -50,7 +56,10 @@ def load_from_csv(file_name):
     assert "Date,Amount,Location,Category,Description" == file_lines[0]
     line_num = 0
     try:
+        transactions = []
         for line in file_lines[1:]:
+            line = line.strip()
+            if not line: continue
             line_num += 1
             [date,amount,payee,category,description] = line.split(",", 4)
             transaction = Transaction(date, "-" + amount, payee,
@@ -69,8 +78,9 @@ def load_from_qif(file_name):
         transaction = None
         line_num = 0
         for line in file_lines:
+            line = line.strip()
             line_num += 1
-            if not line or line[0].isspace():
+            if not line:
                 continue
             elif line[0] == 'C':
                 transaction = Transaction(None, None, None, None, None)
@@ -83,7 +93,9 @@ def load_from_qif(file_name):
                 assert 1 <= int(month) <= 12
                 assert 1 <= int(day) <= 31
                 assert 2012 <= int(year)
-                transaction.date = "%02d/%02d/%04d" % (month, day, year)
+                transaction.date = "%02d/%02d/%04d" % (int(month),
+                                                       int(day),
+                                                       int(year))
             elif line[0]== 'N':
                 # ignore
                 pass
@@ -106,12 +118,17 @@ def process(script_filename):
         line_num = 0
         for line in open(script_filename):
             line_num += 1
-            words = line.split()
-            if words[0] == "REPR":
+            words = line.strip().split()
+            if words[0] == "#":
+                # Comment
+                continue
+            elif words[0] == "REPR":
                 # REPR X
                 [_, x] = words
                 for transaction in transaction_sets[x]:
                     print repr(transaction)
+            elif words[0] == "PRINT":
+                print " ".join(words[1:])
             elif words[2] == "CSV":
                 # X = CSV FILENAME
                 [x, _, _, filename] = words
@@ -120,21 +137,23 @@ def process(script_filename):
                 # X = QIF FILENAME
                 [x, _, _, filename] = words
                 transaction_sets[x] = load_from_qif(filename)
-            elif words[2] == "SUB":
-                # X = SUB Y Z
-                [x, _, _, y, z] = words
-                conflict_map = {}
-                add_to_conflict_map(conflict_map, transaction_sets[y])
-                remove_from_conflict_map(conflict_map, transaction_sets[z])
-                transactions = []
-                for t in conflict_map.values():
-                    transactions.extend(t)
-                transaction_sets[x] = transactions
             elif words[2] == "ADD":
                 # X = ADD Y Z
                 [x, _, _, y, z] = words
                 transactions = transaction_sets[y] + transaction_sets[z]
                 transaction_sets[x] = transactions
+            elif words[3] == "SUB":
+                # W X = SUB Y Z
+                [w, x, _, _, y, z] = words
+                conflict_map = {}
+                add_to_conflict_map(conflict_map, transaction_sets[y])
+                transaction_sets[x] = \
+                    remove_from_conflict_map(conflict_map, transaction_sets[z])
+                transactions = []
+                for t in conflict_map.values():
+                    transactions.extend(t)
+                transactions.sort(by_date)
+                transaction_sets[w] = transactions
             else:
                 raise Exception("Unknown command: %s" % (line,))
     except:
