@@ -20,6 +20,17 @@ class CategoryRule(object):
             and self.compiled_regexp.match(transaction.description)):
             transaction.category = self.category
 
+class PrefixRule(object):
+    def __init__(self, prefix):
+        self.prefix = prefix
+
+    def apply(self, transaction):
+        if transaction.category is None:
+            return
+        if transaction.category.startswith(self.prefix):
+            return
+        transaction.category = self.prefix + transaction.category
+
 class LocationRule(object):
     def __init__(self, regexp, replacement):
         self.regexp = regexp
@@ -248,6 +259,12 @@ class Interpreter(object):
         assert state == 'WS'
         return words
 
+    def add_rule(self, ruleset, rule):
+        if ruleset not in self.rule_sets:
+            self.rule_sets[ruleset] = [rule]
+        else:
+            self.rule_sets[ruleset].append(rule)
+
     def process(self, script_filename):
         try:
             line_num = 0
@@ -273,24 +290,19 @@ class Interpreter(object):
                     print " ".join(words[1:])
                 elif words[0] == "CATRULE":
                     # CATRULE R category regexp
-                    ruleset = words[1]
-                    category = words[2]
-                    regexp = " ".join(words[3:])
+                    [_, r, category, regexp] = words
                     rule = CategoryRule(regexp, category)
-                    if ruleset not in self.rule_sets:
-                        self.rule_sets[ruleset] = [rule]
-                    else:
-                        self.rule_sets[ruleset].append(rule)
+                    self.add_rule(r, rule)
                 elif words[0] == "LOCRULE":
                     # LOCRULE R regexp replacement
-                    ruleset = words[1]
-                    category = words[2]
-                    regexp = " ".join(words[3:])
-                    rule = CategoryRule(regexp, category)
-                    if ruleset not in self.rule_sets:
-                        self.rule_sets[ruleset] = [rule]
-                    else:
-                        self.rule_sets[ruleset].append(rule)
+                    [_, r, regexp, replacement] = words
+                    rule = LocationRule(regexp, replacement)
+                    self.add_rule(r, rule)
+                elif words[0] == 'PREFIXRULE':
+                    # PREFIXRULE R prefix
+                    [_, r, prefix] = words
+                    rule = PrefixRule(regexp, replacement)
+                    self.add_rule(r, rule)
                 elif words[0] == "LEDGER":
                     # LEDGER x account
                     [_, x, account] = words
