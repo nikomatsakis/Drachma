@@ -2,7 +2,23 @@
 Processing of transactions.  Read the source, Luke!
 """
 
-import re
+import re, csv
+
+class Rule(object):
+    def __init__(self, regexp, category):
+        self.regexp = regexp
+        self.compiled_regexp = re.compile(regexp)
+        self.category = category
+
+    def apply(self, transaction):
+        if transaction.category is not None:
+            return
+        if self.compiled_regexp.match(transaction.location):
+            transaction.category = self.category
+            return
+        if (transaction.description is not None
+            and self.compiled_regexp.match(transaction.description)):
+            transaction.category = self.category
 
 class Transaction(object):
     def __init__(self, date, amount, location, category, description):
@@ -50,7 +66,7 @@ def remove_from_conflict_map(conflict_map, transactions):
     not_found.sort(by_date)
     return not_found
 
-def load_from_csv(file_name):
+def load_from_cash_csv(file_name):
     file_text = open(file_name).read()
     file_lines = file_text.split("\n")
     assert "Date,Amount,Location,Category,Description" == file_lines[0]
@@ -64,6 +80,23 @@ def load_from_csv(file_name):
             [date,amount,payee,category,description] = line.split(",", 4)
             transaction = Transaction(date, "-" + amount, payee,
                                       category, description)
+            transactions.append(transaction)
+        return transactions
+    except:
+        print "Error at %s:%d" % (file_name, line_num)
+        raise
+
+def load_from_wellsfargo_csv(file_name):
+    line_num = 0
+    try:
+        transactions = []
+        reader = csv.reader(open(file_name))
+        for row in reader:
+            line_num += 1
+            if not row: continue
+            [date,amount,_,_,payee] = row
+            transaction = Transaction(date, amount, payee,
+                                      None, None)
             transactions.append(transaction)
         return transactions
     except:
@@ -114,14 +147,19 @@ def load_from_qif(file_name):
 
 def process(script_filename):
     try:
+        rule_sets = {}
         transaction_sets = {}
         line_num = 0
         for line in open(script_filename):
             line_num += 1
             words = line.strip().split()
-            if words[0] == "#":
+            if not words or words[0] == "#":
                 # Comment
                 continue
+            elif words[0] == "GOSUB":
+                # GOSUB file
+                [_, filename] = words
+                process(filename)
             elif words[0] == "REPR":
                 # REPR X
                 [_, x] = words
@@ -129,10 +167,30 @@ def process(script_filename):
                     print repr(transaction)
             elif words[0] == "PRINT":
                 print " ".join(words[1:])
-            elif words[2] == "CSV":
-                # X = CSV FILENAME
+            elif words[0] == "RULE":
+                # RULE R category regexp
+                ruleset = words[1]
+                category = words[2]
+                regexp = " ".join(words[3:])
+                rule = Rule(regexp, category)
+                if ruleset not in rule_sets:
+                    rule_sets[ruleset] = [rule]
+                else:
+                    rule_sets[ruleset].append(rule)
+            elif words[0] == "APPLY":
+                # APPLY R X
+                [_, r, x] = words
+                for transaction in transaction_sets[x]:
+                    for rule in rule_sets[r]:
+                        rule.apply(transaction)
+            elif words[2] == "CASH":
+                # X = CASH FILENAME
                 [x, _, _, filename] = words
-                transaction_sets[x] = load_from_csv(filename)
+                transaction_sets[x] = load_from_cash_csv(filename)
+            elif words[2] == "WF":
+                # X = WF FILENAME
+                [x, _, _, filename] = words
+                transaction_sets[x] = load_from_wellsfargo_csv(filename)
             elif words[2] == "QIF":
                 # X = QIF FILENAME
                 [x, _, _, filename] = words
