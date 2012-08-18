@@ -101,7 +101,6 @@ def adjust_date(date, by_days):
                 month = 1
 
     result = "%04d/%02d/%02d" % (year, month, day)
-    print "%s + %d = %s" % (date, by_days, result)
     return result
 
 def by_date(t1, t2):
@@ -393,8 +392,8 @@ class Interpreter(object):
             [_, x, account] = words
             print_ledger(account, self.transaction_sets[x])
         elif words[0] == "APPLY":
-            # APPLY R X
-            [_, r, x] = words
+            # APPLY R TO X
+            [_, r, _, x] = words
             for transaction in self.transaction_sets[x]:
                 for rule in self.rule_sets[r]:
                     rule.apply(transaction)
@@ -441,9 +440,24 @@ class Interpreter(object):
             print "Error at %s:%d" % (script_filename, line_num)
             raise
 
+def test(args):
+    def check_eq(value1, value2):
+        if value1 != value2:
+            raise Exception("Expected `%s`, found `%s`" % (value2, value1))
+    check_eq(adjust_date("2012/08/31", 1), "2012/09/01")
+    check_eq(adjust_date("2012/08/30", 3), "2012/09/02")
+    check_eq(adjust_date("2012/12/29", 7), "2013/01/05")
+    check_eq(adjust_date("2012/01/01", -7), "2011/12/25")
+
 def main(args):
-    if len(args) != 1:
-        print "Usage: dracha.py SCRIPT"
+    if len(args) < 1:
+        print "Usage: dracha.py scripts"
+        print "Usage: dracha.py --test"
+        return
+
+    if args[0] == "--test":
+        test(args[1:])
+        return
 
     interp = Interpreter()
     for arg in args:
