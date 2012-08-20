@@ -119,8 +119,8 @@ def subtract(transactions1, transactions2, fuzz):
         if not transaction.date:
             return False
 
-        for adjustment in range(-fuzz, 1):
-            key = transaction.conflict_key(adjustment)
+        for adjustment in range(fuzz+1):
+            key = transaction.conflict_key(-adjustment)
             if key in conflict_map:
                 lst = conflict_map[key]
                 if len(lst) > 1:
@@ -142,7 +142,10 @@ def subtract(transactions1, transactions2, fuzz):
     remaining = []
     for t in conflict_map.values():
         remaining.extend(t)
+
+    missing.sort(by_date)
     remaining.sort(by_date)
+
     return (remaining, missing)
 
 def load_from_cash_csv(file_name):
