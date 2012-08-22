@@ -1,43 +1,55 @@
+#!/usr/bin/env python
+
 """
 Processing of transactions.  Read the source, Luke!
 """
 
 import re, csv
 
-class CategoryRule(object):
+class SingleTransactionRule(object):
+    def apply_to_transactions(self, transactions):
+        for transaction in transactions:
+            self.apply_to_transaction(transaction)
+        return transactions
+
+class DropRule(object):
+    def __init__(self, regexp):
+        self.regexp = regexp
+        self.compiled_regexp = re.compile(regexp)
+
+    def apply_to_transactions(self, transactions):
+        return [t for t in transactions if not t.matches(self.compiled_regexp)]
+            
+class CategoryRule(SingleTransactionRule):
     def __init__(self, regexp, category):
         self.regexp = regexp
         self.compiled_regexp = re.compile(regexp)
         self.category = category
 
-    def apply(self, transaction):
+    def apply_to_transaction(self, transaction):
         if transaction.category is not None:
             return
-        if self.compiled_regexp.match(transaction.location):
-            transaction.category = self.category
-            return
-        if (transaction.description is not None
-            and self.compiled_regexp.match(transaction.description)):
+        if transaction.matches(self.compiled_regexp):
             transaction.category = self.category
 
-class PrefixRule(object):
+class PrefixRule(SingleTransactionRule):
     def __init__(self, prefix):
         self.prefix = prefix
 
-    def apply(self, transaction):
+    def apply_to_transaction(self, transaction):
         if transaction.category is None:
             return
         if transaction.category.startswith(self.prefix):
             return
         transaction.category = self.prefix + transaction.category
 
-class LocationRule(object):
+class LocationRule(SingleTransactionRule):
     def __init__(self, regexp, replacement):
         self.regexp = regexp
         self.compiled_regexp = re.compile(regexp)
         self.replacement = replacement
 
-    def apply(self, transaction):
+    def apply_to_transaction(self, transaction):
         transaction.location = \
             self.compiled_regexp.sub(transaction.location, self.replacement)
 
@@ -49,6 +61,10 @@ class Transaction(object):
         self.location = location       # A string
         self.category = category       # A string
         self.description = description # A string
+
+    def matches(self, regexp):
+        return ((self.location is not None and regexp.match(self.location)) or
+                (self.description is not None and regexp.match(self.description)))
 
     def __eq__(self, other):
         return (
@@ -197,10 +213,19 @@ def load_from_qif(file_name):
             line_num += 1
             if not line:
                 continue
-            elif line[0] == 'C':
+            elif line[0] == '!':
+                continue
+            elif line[0] == '^':
+                if transaction:
+                    transactions.append(transaction)
+                transaction = None
+                continue
+
+            if not transaction:
                 transaction = Transaction(None, None, None, None, None)
-            elif not transaction:
-                assert False
+
+            if line[0] == 'C':
+                pass
             elif line[0] == 'D':
                 mo = re.match("(\d\d)/(\d\d)/(\d\d\d\d)", line[1:])
                 assert mo
@@ -211,16 +236,12 @@ def load_from_qif(file_name):
                 transaction.date = "%04d/%02d/%02d" % (int(year),
                                                        int(month),
                                                        int(day))
-            elif line[0]== 'N':
-                # ignore
+            elif line[0] == 'N' or line[0] == 'A':
                 pass
             elif line[0] == 'P':
                 transaction.location = line[1:]
             elif line[0] == 'T':
                 transaction.amount = line[1:]
-            elif line[0] == '^':
-                transactions.append(transaction)
-                transaction = None
         assert not transaction
         return transactions
     except:
@@ -278,73 +299,73 @@ def print_table(transactions):
     for transaction in transactions:
         print_row(transaction)
 
+def split_command(cmd):
+    words = []
+    state = 'WS'
+    chars = []
+    prev_state = None
+    for idx in range(len(cmd)):
+        char = cmd[idx]
+
+        if state == 'ESCAPE':
+            if char.isalpha():  # Permit \d etc to pass through unescaped
+                chars.append('\\')
+            chars.append(char)
+            state = prev_state
+            continue
+
+        if state == 'STR':
+            if char == '"':
+                state = 'WORD'
+            elif char == '\\':
+                prev_state = state
+                state = 'ESCAPE'
+            else:
+                chars.append(char)
+            continue
+
+        if state == 'WS':
+            if char.isspace():
+                continue
+            chars = []
+            state = 'WORD'
+            # fall through
+
+        assert state == 'WORD'
+
+        if char == '\\':
+            prev_state = state
+            state = 'ESCAPE'
+            continue
+
+        if char == '"':
+            state = 'STR'
+            continue
+
+        if char.isspace():
+            words.append("".join(chars))
+            state = 'WS'
+            continue
+
+        chars.append(char)
+
+    if state == 'ESCAPE':
+        raise Exception("Ended with escape!")
+
+    if state == 'STR':
+        raise Exception("Ended in string!")
+
+    if state == 'WORD':
+        words.append("".join(chars))
+        state = 'WS'
+
+    assert state == 'WS'
+    return words
+
 class Interpreter(object):
     def __init__(self):
         self.rule_sets = {}
         self.transaction_sets = {}
-
-    def split_command(self, cmd):
-        words = []
-        state = 'WS'
-        chars = []
-        prev_state = None
-        for idx in range(len(cmd)):
-            char = cmd[idx]
-
-            if state == 'ESCAPE':
-                if char.isalpha():  # Permit \d etc to pass through unescaped
-                    chars.append('\\')
-                chars.append(char)
-                state = prev_state
-                return
-
-            if state == 'STR':
-                if char == '"':
-                    state = 'WORD'
-                elif char == '\\':
-                    prev_state = state
-                    state = 'ESCAPE'
-                else:
-                    chars.append(char)
-                continue
-
-            if state == 'WS':
-                if char.isspace():
-                    continue
-                chars = []
-                state = 'WORD'
-                # fall through
-            
-            assert state == 'WORD'
-
-            if char == '\\':
-                prev_state = state
-                state = 'ESCAPE'
-                continue
-
-            if char == '"':
-                state = 'STR'
-                continue
-
-            if char.isspace():
-                words.append("".join(chars))
-                state = 'WS'
-                continue
-            
-            chars.append(char)
-        
-        if state == 'ESCAPE':
-            raise Exception("Ended with escape!")
-        
-        if state == 'STR':
-            raise Exception("Ended in string!")
-
-        if state == 'WORD':
-            words.append("".join(chars))
-            state = 'WS'
-        
-        assert state == 'WS'
-        return words
 
     def add_rule(self, ruleset, rule):
         if ruleset not in self.rule_sets:
@@ -357,7 +378,7 @@ class Interpreter(object):
             # Comment
             return
 
-        words = self.split_command(line)
+        words = split_command(line)
         if not words:
             pass # Blank line
         elif words[0] == "GOSUB":
@@ -375,18 +396,23 @@ class Interpreter(object):
             print_table(self.transaction_sets[x])
         elif words[0] == "PRINT":
             print " ".join(words[1:])
-        elif words[0] == "CATRULE":
-            # CATRULE R category regexp
+        elif words[0] == "CAT-RULE":
+            # CAT-RULE R category regexp
             [_, r, category, regexp] = words
             rule = CategoryRule(regexp, category)
             self.add_rule(r, rule)
-        elif words[0] == "LOCRULE":
-            # LOCRULE R regexp replacement
+        elif words[0] == "DROP-RULE":
+            # DROP-RULE R regexp
+            [_, r, regexp] = words
+            rule = DropRule(regexp)
+            self.add_rule(r, rule)
+        elif words[0] == "LOC-RULE":
+            # LOC-RULE R regexp replacement
             [_, r, regexp, replacement] = words
             rule = LocationRule(regexp, replacement)
             self.add_rule(r, rule)
-        elif words[0] == 'PREFIXRULE':
-            # PREFIXRULE R prefix
+        elif words[0] == 'PREFIX-RULE':
+            # PREFIX-RULE R prefix
             [_, r, prefix] = words
             rule = PrefixRule(prefix)
             self.add_rule(r, rule)
@@ -397,9 +423,13 @@ class Interpreter(object):
         elif words[0] == "APPLY":
             # APPLY R TO X
             [_, r, _, x] = words
-            for transaction in self.transaction_sets[x]:
-                for rule in self.rule_sets[r]:
-                    rule.apply(transaction)
+            for rule in self.rule_sets[r]:
+                self.transaction_sets[x] = \
+                    rule.apply_to_transactions(self.transaction_sets[x])
+        elif words[0] == 'SORT-BY-DATE':
+            # SORT-BY-DATE X
+            [_, x] = words
+            self.transaction_sets[x].sort(by_date)
         elif words[2] == "CASH":
             # X = CASH FILENAME
             [x, _, _, filename] = words
@@ -446,11 +476,14 @@ class Interpreter(object):
 def test(args):
     def check_eq(value1, value2):
         if value1 != value2:
-            raise Exception("Expected `%s`, found `%s`" % (value2, value1))
+            raise Exception("Expected %r, found %r" % (value2, value1))
     check_eq(adjust_date("2012/08/31", 1), "2012/09/01")
     check_eq(adjust_date("2012/08/30", 3), "2012/09/02")
     check_eq(adjust_date("2012/12/29", 7), "2013/01/05")
     check_eq(adjust_date("2012/01/01", -7), "2011/12/25")
+
+    check_eq(split_command(r"a b c"), ["a", "b", "c"])
+    check_eq(split_command(r"[\d]+"), ["[\\d]+"])
 
 def main(args):
     if len(args) < 1:
